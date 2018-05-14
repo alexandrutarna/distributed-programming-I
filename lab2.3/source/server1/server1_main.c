@@ -184,9 +184,7 @@ int process_client_request(int connfd){
 						fclose(fp);
 
 					}
-					else {
-							// file cannt be open
-					}			
+		
 				}
 
 				// requested file not found or cannot be read
