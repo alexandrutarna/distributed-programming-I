@@ -149,10 +149,18 @@ int process_client_request(int connfd){
 				trace( err_msg("(%s) --- requested file by the client is: '%s'\n" , prog_name, file_name) );
 
 				struct stat file_stat;
-				int ret = stat(file_name, &file_stat);
-				if (ret == 0) {
+
+				// On success, zero is returned.  On error, -1 is returned, and errno is
+       			// set appropriately.
+				int result = stat(file_name, &file_stat);
+				
+				if (result == 0) {
+					// file exists and the stats are loaded
 					FILE *fp;
-					if ( (fp=fopen(file_name, "rb")) != NULL) {
+					fp=fopen(file_name, "rb");
+
+					if (fp != NULL) {
+						// file was oppened with success
 						int file_size = file_stat.st_size;
 						int last_mdf = file_stat.st_mtim.tv_sec;
 
