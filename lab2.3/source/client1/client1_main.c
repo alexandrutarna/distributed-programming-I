@@ -110,13 +110,15 @@ int main (int argc, char *argv[])
 	char* file_names[nr_of_files];
 
 
-	for (short i=0; i<nr_of_files; i++){
-		file_names[i] = argv[i+3];
-		printf("argv[%d] = %s\n", i+3, file_names[i]);
-	}
+	// for (short i=0; i<nr_of_files; i++){
+	// 	file_names[i] = argv[i+3];
+	// 	printf("argv[%d] = %s\n", i+3, file_names[i]);
+	// }
 
 
 	//fname = argv[3];
+
+	trace ( err_msg("(%s) ------------------- INITIALIZATION ----------------------",prog_name) );
 
 	/* create socket */
 	client_socketfd = Socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
@@ -134,10 +136,11 @@ int main (int argc, char *argv[])
     showAddr("Connecting to target address", &saddr);
     Connect(client_socketfd, (struct sockaddr *)&saddr, sizeof(saddr));
     printf("Connected .\n");
-
-    /* main client loop */
+trace ( err_msg("(%s) ---------------------------------------------------------------",prog_name) );
+   
+ /* main client loop */
 for (int i=0; i<nr_of_files; i++){
-	
+	trace ( err_msg("(%s) ------------  LOOP: %d  ----------------\n",prog_name, i) );
 	char *file_name;
 	file_name = argv[i+3];
 
@@ -173,7 +176,7 @@ for (int i=0; i<nr_of_files; i++){
 
 	if (isOK(buf)){
 		
-		printf("+OK received from server\n");
+		printf("'+OK' received from server\n");
 
 		char size_nw_order[4];
 		uint32_t file_size;
@@ -242,7 +245,7 @@ for (int i=0; i<nr_of_files; i++){
 		}
 
 
-	printf("========================================\n");
+	printf("==================================================\n");
 		// end of the for 
 }
 
