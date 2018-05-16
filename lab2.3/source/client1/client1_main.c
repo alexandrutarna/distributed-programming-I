@@ -23,7 +23,7 @@
 #include "../sockwrap.h"
 
 #define BUFLEN 255
-
+#define MAX_FNAMEL 255
 #define MSG_OK  "+OK"
 #define MSG_OK_LEN  strlen(MSG_OK)
 
@@ -39,7 +39,7 @@
 
 
 char *prog_name;
-
+bool serv_err=0;
 
 bool isNumber(char number[])
 	{
@@ -136,7 +136,7 @@ int main (int argc, char *argv[])
     showAddr("Connecting to target address", &saddr);
     Connect(client_socketfd, (struct sockaddr *)&saddr, sizeof(saddr));
     printf("Connected .\n");
-trace ( err_msg("(%s) ---------------------------------------------------------------",prog_name) );
+	trace ( err_msg("(%s) ---------------------------------------------------------------",prog_name) );
    
  /* main client loop */
 for (int i=0; i<nr_of_files; i++){
@@ -220,9 +220,9 @@ for (int i=0; i<nr_of_files; i++){
 		
 
 
-		char new_file_name[255];
-		sprintf(new_file_name, "NEW_%s", file_name);
-
+		char new_file_name[MAX_FNAMEL];
+		//sprintf(new_file_name, "NEW_%s", file_name);
+		sprintf(new_file_name, "%s", file_name);
 
 		FILE *fp;
 		if ( (fp=fopen(new_file_name, "wb"))!=NULL) {
@@ -236,23 +236,39 @@ for (int i=0; i<nr_of_files; i++){
 			trace( err_msg("(%s) --- Received file: '%s'",prog_name, new_file_name));
 			// trace( err_msg("(%s) \tsize:\t'%s'",prog_name, file_size));
 			// trace( err_msg("(%s) \tlast modification:\t'%s'",prog_name, last_mdf));
+		} else {
+			trace( err_msg("(%s) --- File: '%s' could not be oppened!",prog_name, new_file_name));
 		}
+
 		// printf("received '%s' from server", buf2);
 
 	} else
 		if (isERR(buf)){
 			printf("------ ERR received from server\n");
+			printf("------ connection will be closed\n");
+			serv_err = 1;
+			break;
+
 		}
 
 
-	printf("==================================================\n");
-		// end of the for 
+	printf("==================================================\n\n");
+		// end of the for loop
 }
+
+
+if (serv_err){
+	Close (client_socketfd);
+
+} else {
 
 	char *MSG_QUIT = "QUIT\r\n";
 	short MSG_QUIT_LEN = strlen(MSG_QUIT);
 	Write (client_socketfd, MSG_QUIT, MSG_QUIT_LEN);
 	Close (client_socketfd);
+}
+
+	
 
 	return 0;
 }
