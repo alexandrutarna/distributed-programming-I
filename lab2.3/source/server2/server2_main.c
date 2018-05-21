@@ -49,25 +49,14 @@
 
 char *prog_name;
 
-char prog_name_with_pid[MAXBUFL];
+char child_prog_name[255];
 
 
 int pids[3][2];
 
 int children_counter = 0;
 
-static void sig_chld(int signo) {
-	err_msg ("(%s) info - sig_chld() called", prog_name);
-	trace ( err_msg("(%s) - children_counter not 'waited' = %d", prog_name, children_counter) );
-	int status;
-	int pid;
-	while ( (pid = waitpid(-1, &status, WNOHANG) ) > 0) {
-		trace ( err_msg("(%s) info - waitpid returned PID %d", prog_name, pid) );
-		children_counter--;
-		trace ( err_msg("(%s) - children_counter not 'waited' = %d", prog_name, children_counter) );
-	}
-	return;
-}
+
 
 
 	/* Checks if the content of buffer buf equals the "GET "*/
@@ -104,7 +93,39 @@ bool isNumber(char number[])
    		return true;
 	}
 
+static void signal_handler(int signo) {
+	trace ( err_msg ("(%s) - [handler] - signal_handler() started", prog_name) );
+	trace ( err_msg("(%s) - [handler] - children_counter not 'waited' = %d", prog_name, children_counter) );
+	int status;
+	int pid;
+	while ( (pid = waitpid(-1, &status, WNOHANG) ) > 0) {
+		trace ( err_msg("(%s) [handler] - waitpid returned PID %d", prog_name, pid) );
+		children_counter--;
+		trace ( err_msg("(%s) - [handler] - children_counter not 'waited' = %d", prog_name, children_counter) );
+	}
+	return;
+}
 
+void check_terminated_children(){
+
+			trace ( err_msg("(%s) - maximum number of children reached", prog_name) );
+			trace ( err_msg("(%s) - wait for a child to terminate", prog_name) );
+
+			trace ( err_msg("(%s) - sleeping 10 seconds before calling wait()", prog_name) );
+			int sec = 10;
+			while (sec!=0) {  // Need to test return value, if != 0 sleep syscall has been interrupted by a signal
+				sec = sleep(sec);
+			}
+			trace ( err_msg("(%s) - sleeping ENDED", prog_name) );
+
+			int status;
+			/* wait for a children to terminate */
+			int wpid = waitpid(-1, &status, 0);
+			children_counter--;	
+			trace( err_msg ("(%s) - child [%d] was zombie", prog_name, wpid) );
+			
+			trace ( err_msg("(%s) - children_counter not 'waited' = %d", prog_name, children_counter) );
+}
 
 
 int process_client_request(int connfd){
@@ -222,27 +243,26 @@ int process_client_request(int connfd){
 				
 				// not GET nor QUIT
 				else {
-				trace( err_msg("(%s) --- UNKNOWN command from the client ",prog_name) );
+				trace( err_msg("(%s) --- UNKNOWN command from the client - send MSG_ERR and close",prog_name) );
 				Write (connfd, MSG_ERR, MSG_ERR_LEN);
 				// status = 1;
 				break;
 				}
-
 		}
-
+		Close(connfd);
 	return status;
 }
 
 
 
-int main (int argc, char *argv[])
-{
-	int listenfd, connfd, err=0;
+int main (int argc, char *argv[]){
+
+	int listenfd, new_sockfd, err=0;
 	short port;
 	struct sockaddr_in servaddr, cliaddr;
 	socklen_t cliaddrlen = sizeof(cliaddr);
 
-	struct sigaction action;
+	struct sigaction signalAction;
 	int sigact_res;
 
 
@@ -278,9 +298,9 @@ int main (int argc, char *argv[])
 	Listen(listenfd, LISTENQ);
 	
 
-	memset(&action, 0, sizeof (action));
-	action.sa_handler = sig_chld;
-	sigact_res = sigaction(SIGCHLD, &action, NULL);
+	memset(&signalAction, '\0', sizeof (signalAction));
+	signalAction.sa_handler = signal_handler;
+	sigact_res = sigaction(SIGCHLD, &signalAction, NULL);
 	if (sigact_res == -1)
 	err_quit("(%s) sigaction() failed", prog_name);
 
@@ -288,63 +308,52 @@ int main (int argc, char *argv[])
 
 	for (;;){
 
-		// This is needed to avoid a race-condition: child terminates after if children_counter == MAX_CHILDREN but before wait() - to avoid the wait() being blocked incorrectly because the children has already been waited in the signal handler, the SIGCHLD signal is masked before entering the if, and re-enabled after the if
-		sigset_t new_mask;
-		sigemptyset (&new_mask);
-		sigaddset(&new_mask, SIGCHLD);
-		sigprocmask(SIG_BLOCK, &new_mask, NULL);
+		// mask and block SIGCHLD
+		sigset_t signal_set;
+		sigemptyset (&signal_set);
+		sigaddset(&signal_set, SIGCHLD);
+		sigprocmask(SIG_BLOCK, &signal_set, NULL);
 
+		// check for
 		if ( children_counter == MAX_CHILDREN) {
-			trace ( err_msg("(%s) - maybe: max number of children reached: NO accept now", prog_name) );
-			trace ( err_msg("(%s) - calling blocking system call wait() to wait for a child to terminate", prog_name) );
-
-			// This is to test a possible race-condition: child terminates after if but before wait() - to avoid the wait() being blocked incorrectly because the children has already been waited in the signal handler, the SIGCHLD signal is masked before entering the if, and re-enabled after the if
-			trace ( err_msg("(%s) - sleeping 10 seconds before calling wait()", prog_name) );
-			int sec = 10;
-			while (sec!=0) {  // Need to test return value, if != 0 sleep syscall has been interrupted by a signal
-				sec = sleep(sec);
-			}
-			trace ( err_msg("(%s) - sleeping ENDED", prog_name) );
-
-			int status;
-			/* wait for a children to terminate */
-			int wpid = waitpid(-1, &status, 0);
-			trace( err_msg ("(%s) waitpid() (blocking) returned child PID %d ...", prog_name, wpid) );
-			children_counter--;	
-			trace ( err_msg("(%s) - children_counter not 'waited' = %d", prog_name, children_counter) );
+			check_terminated_children();
 		}
-		// Re-enable the reception of the SIGCHLD signal. The signal is generated anyway, but it is handled only after sigprocmask re-enables it - and the nonblocking wait() in the signal handler is ok in any case.
-		sigemptyset (&new_mask);
-		sigaddset(&new_mask, SIGCHLD);
-		sigprocmask(SIG_UNBLOCK, &new_mask, NULL);
+		// unblock SIGCHLD
+		sigemptyset (&signal_set);
+		sigaddset(&signal_set, SIGCHLD);
+		sigprocmask(SIG_UNBLOCK, &signal_set, NULL);
 
 		
 		trace( err_msg ("(%s) waiting for connections ...", prog_name) );
 		/* NB: the Accept must be used because it correctly handles the SIGCHLD signal */
-		connfd = Accept (listenfd, (SA*) &cliaddr, &cliaddrlen);
+		new_sockfd = Accept (listenfd, (SA*) &cliaddr, &cliaddrlen);
 		trace ( err_msg("(%s) - new connection from client %s:%u", prog_name, inet_ntoa(cliaddr.sin_addr), ntohs(cliaddr.sin_port)) );
 
 
 		trace ( err_msg("(%s) - fork() to create a child", prog_name) );
 		
-		if ( (childpid = Fork()) == 0) {
-			/* Child */
-			int cpid = getpid();
-			sprintf(prog_name_with_pid, "%s child %d", prog_name, cpid);
-			prog_name = prog_name_with_pid;
+
+		childpid = fork();
+		if (childpid == -1)
+      	trace ( err_msg("(%s) - fork error", prog_name) );
+    
+    	if (childpid == 0){
+			// child
+			int newServerPID = getpid();
+			sprintf(child_prog_name, "%s child %d", prog_name, newServerPID);
+			prog_name = child_prog_name;
 			Close(listenfd);
-			err = process_client_request(connfd);
+			err = process_client_request(new_sockfd);
+			// Close(new_sockfd);
+			trace( err_msg ("(%s) -  connection closed by %s",prog_name, (err==1) ? "client":"server") );
 			exit(0);
+			// terminate child
 		} else {
-			/* Parent */
+			// parent
 			children_counter++;
 			trace ( err_msg("(%s) - children_counter not 'waited' = %d", prog_name, children_counter) );
 		}
-
-		//Close (connfd);
-		//trace( err_msg ("(%s) - connection closed by %s", prog_name, (err==0)?"client":"server") );
-
-
+    
 	}
 	return 0;
 }
