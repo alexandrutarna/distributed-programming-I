@@ -46,16 +46,10 @@
 #endif
 
 
-
 char *prog_name;
-
 char child_prog_name[255];
 
-
-int pids[3][2];
-
-int children_counter = 0;
-
+// int pids[3][2];
 
 
 
@@ -93,40 +87,6 @@ bool isNumber(char number[])
    		return true;
 	}
 
-static void signal_handler(int signo) {
-	trace ( err_msg ("(%s) - [handler] - signal_handler() started", prog_name) );
-	trace ( err_msg("(%s) - [handler] - children_counter not 'waited' = %d", prog_name, children_counter) );
-	int status;
-	int pid;
-	while ( (pid = waitpid(-1, &status, WNOHANG) ) > 0) {
-		trace ( err_msg("(%s) [handler] - waitpid returned PID %d", prog_name, pid) );
-		children_counter--;
-		trace ( err_msg("(%s) - [handler] - children_counter not 'waited' = %d", prog_name, children_counter) );
-	}
-	return;
-}
-
-void check_terminated_children(){
-
-			trace ( err_msg("(%s) - maximum number of children reached", prog_name) );
-			trace ( err_msg("(%s) - wait for a child to terminate", prog_name) );
-
-			trace ( err_msg("(%s) - sleeping 10 seconds before calling wait()", prog_name) );
-			int sec = 10;
-			while (sec!=0) {  // Need to test return value, if != 0 sleep syscall has been interrupted by a signal
-				sec = sleep(sec);
-			}
-			trace ( err_msg("(%s) - sleeping ENDED", prog_name) );
-
-			int status;
-			/* wait for a children to terminate */
-			int wpid = waitpid(-1, &status, 0);
-			children_counter--;	
-			trace( err_msg ("(%s) - child [%d] was zombie", prog_name, wpid) );
-			
-			trace ( err_msg("(%s) - children_counter not 'waited' = %d", prog_name, children_counter) );
-}
-
 
 int process_client_request(int connfd){
 	char buf[MAXBUFL+1]; /* +1 to make room for \0 */
@@ -134,13 +94,9 @@ int process_client_request(int connfd){
 	int status = 0;
 	const int SIZE_OF_CHAR = sizeof(char);
 
-
 		while (1) {
 			trace( err_msg("(%s) - waiting for command ...",prog_name) );
-			/* Do not use Readline as it exits on errors
-			(e.g., clients resetting the connection due to close() on sockets with data yet to read).
-			servers must be robust and never close */
-			/* Do not use Readline_unbuffered because if it fails, it exits! */
+
 			int nread = 0; 
 			char input_character;
 			
@@ -222,9 +178,7 @@ int process_client_request(int connfd){
 						}
 						trace( err_msg("(%s) --- sent file '%s' to client",prog_name, file_name) );
 						fclose(fp);
-
 					}
-		
 				}
 
 				// requested file not found or cannot be read
@@ -249,6 +203,8 @@ int process_client_request(int connfd){
 				break;
 				}
 		}
+
+		// close the socket created for this child
 		Close(connfd);
 	return status;
 }
@@ -261,9 +217,6 @@ int main (int argc, char *argv[]){
 	short port;
 	struct sockaddr_in servaddr, cliaddr;
 	socklen_t cliaddrlen = sizeof(cliaddr);
-
-	struct sigaction signalAction;
-	int sigact_res;
 
 
 	pid_t childpid;
@@ -296,62 +249,48 @@ int main (int argc, char *argv[]){
 	trace ( err_msg("(%s) listening on %s:%u", prog_name, inet_ntoa(servaddr.sin_addr), ntohs(servaddr.sin_port)) );
 
 	Listen(listenfd, LISTENQ);
-	
-
-	memset(&signalAction, '\0', sizeof (signalAction));
-	signalAction.sa_handler = signal_handler;
-	sigact_res = sigaction(SIGCHLD, &signalAction, NULL);
-	if (sigact_res == -1)
-	err_quit("(%s) sigaction() failed", prog_name);
-
-	children_counter = 0;
 
 	for (;;){
-
-		// mask and block SIGCHLD
-		sigset_t signal_set;
-		sigemptyset (&signal_set);
-		sigaddset(&signal_set, SIGCHLD);
-		sigprocmask(SIG_BLOCK, &signal_set, NULL);
-
-		// check for
-		if ( children_counter == MAX_CHILDREN) {
-			check_terminated_children();
-		}
-		// unblock SIGCHLD
-		sigemptyset (&signal_set);
-		sigaddset(&signal_set, SIGCHLD);
-		sigprocmask(SIG_UNBLOCK, &signal_set, NULL);
-
-		
+	
 		trace( err_msg ("(%s) waiting for connections ...", prog_name) );
-		/* NB: the Accept must be used because it correctly handles the SIGCHLD signal */
+
 		new_sockfd = Accept (listenfd, (SA*) &cliaddr, &cliaddrlen);
 		trace ( err_msg("(%s) - new connection from client %s:%u", prog_name, inet_ntoa(cliaddr.sin_addr), ntohs(cliaddr.sin_port)) );
 
 
 		trace ( err_msg("(%s) - fork() to create a child", prog_name) );
 		
-
 		childpid = fork();
 		if (childpid == -1)
       	trace ( err_msg("(%s) - fork error", prog_name) );
     
     	if (childpid == 0){
-			// child
+			// start child
+
 			int newServerPID = getpid();
 			sprintf(child_prog_name, "%s child %d", prog_name, newServerPID);
 			prog_name = child_prog_name;
+
+			trace ( err_msg("(%s) ----- CHILD [%d]- STARTED", prog_name, newServerPID) );
+
+			trace ( err_msg("(%s) - CHILD - close listenfd [%d]", prog_name, listenfd) );
 			Close(listenfd);
+
+			// call the actual function that handles the client
 			err = process_client_request(new_sockfd);
-			// Close(new_sockfd);
-			trace( err_msg ("(%s) -  connection closed by %s",prog_name, (err==1) ? "client":"server") );
-			exit(0);
+			
+			trace( err_msg ("(%s) - CHILD - connection closed by %s",prog_name, (err==1) ? "client":"server") );
+			trace ( err_msg("(%s) ----- CHILD [%d]- STOPPED", prog_name, newServerPID) );
+			
 			// terminate child
+			exit(0);
+			
 		} else {
 			// parent
-			children_counter++;
-			trace ( err_msg("(%s) - children_counter not 'waited' = %d", prog_name, children_counter) );
+			// ignore termination of the cild, needed for avoiding zombies
+			signal(SIGCHLD,SIG_IGN);
+			Close(new_sockfd);
+			trace ( err_msg("(%s) - PARENT - close new_sockfd [%d]", prog_name, new_sockfd) );
 		}
     
 	}
